@@ -1,0 +1,243 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+A = np.sin(np.linspace(0, 10, 1000))
+B = np.sin(np.linspace(0.2, 10.2, 200))
+
+cross_corr = np.correlate(A, B, mode='full')
+time_lags = np.arange(-len(B) + 1, len(A))
+
+plt.plot(time_lags, cross_corr)
+plt.xlabel('Time Lag')
+plt.ylabel('Cross-correlation')
+plt.title('Cross-correlation Analysis')
+plt.grid(True)
+plt.show()
+
+
+
+import os
+import torch
+from PIL import Image
+from torchvision.transforms import functional as F
+from tqdm import tqdm
+
+model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True).autoshape()  
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+dataset_path = 'C:\Users\Shree\Downloads'  
+image_folder = os.path.join(dataset_path, 'images')
+annotation_folder = os.path.join(dataset_path, 'annotations')
+
+image_files = os.listdir(image_folder)
+annotation_files = os.listdir(annotation_folder)
+
+mean_distance = 0.0
+total_images = 0
+
+for image_file in tqdm(image_files):
+    image_path = os.path.join(image_folder, image_file)
+    annotation_path = os.path.join(annotation_folder, image_file.replace('.jpg', '.txt'))
+
+    if os.path.isfile(annotation_path):
+        img = Image.open(image_path).convert('RGB')
+        img_tensor = F.to_tensor(img).unsqueeze(0).to(device)
+         results = model(img_tensor)
+
+       
+        boxes = results.pandas().xyxy[0]
+        class_labels = results.pandas().xyxy[0]['name'].tolist()
+
+        
+        person_coords = []
+        vehicle_coords = []
+
+        for i, class_label in enumerate(class_labels):
+            if class_label == 'person':
+                person_coords.append(boxes[i][0:4])
+            elif class_label == 'vehicle':
+                vehicle_coords.append(boxes[i][0:4])
+
+        for person_coord in person_coords:
+            for vehicle_coord in vehicle_coords:
+                mean_distance += torch.dist(person_coord, vehicle_coord)
+                total_images += 1
+
+if total_images > 0:
+    mean_distance /= total_images
+
+print(f"Mean distance between Person and Vehicle instances: {mean_distance:.2f}")
+
+
+import numpy as np
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from sklearn.metrics import classification_report
+
+
+(x_train, y_train), (x_test, y_test) = keras.datasets.cifar10.load_data()
+num_classes = 10
+
+
+y_train = keras.utils.to_categorical(y_train, num_classes)
+y_test = keras.utils.to_categorical(y_test, num_classes)
+
+datagen = ImageDataGenerator(
+    rotation_range=20,
+    width_shift_range=0.2,
+    height_shift_range=0.2,
+    horizontal_flip=True
+)
+datagen.fit(x_train)
+
+
+model = keras.Sequential([
+    layers.Conv2D(32, (3, 3), activation='relu', input_shape=(32, 32, 3)),
+    layers.MaxPooling2D(pool_size=(2, 2)),
+    layers.Conv2D(64, (3, 3), activation='relu'),
+    layers.MaxPooling2D(pool_size=(2, 2)),
+    layers.Flatten(),
+    layers.Dense(64, activation='relu'),
+    layers.Dense(num_classes, activation='softmax')
+])
+
+
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+model.fit(x_train, y_train, batch_size=32, epochs=10, validation_data=(x_test, y_test))
+
+
+_, acc_original = model.evaluate(x_test, y_test, verbose=0)
+print(f"Accuracy on original dataset: {acc_original}")
+
+model.fit(datagen.flow(x_train, y_train, batch_size=32), epochs=10, validation_data=(x_test, y_test))
+
+
+_, acc_augmented = model.evaluate(x_test, y_test, verbose=0)
+print(f"Accuracy on augmented dataset: {acc_augmented}")
+
+
+y_pred = np.argmax(model.predict(x_test), axis=-1)
+y_test = np.argmax(y_test, axis=-1)
+print(classification_report(y_test, y_pred))
+
+
+
+import os
+import cv2
+import random
+from imgaug import augmenters as iaa
+
+
+dataset_path = ' C:\Users\Shree\Downloads\plate'  
+languages = ['Hindi', 'Kannada', 'Tamil', 'Telugu', 'Bengali']
+augmented_dataset_path = ' C:\Users\Shree\Downloads\augumented'  
+augmented_images_per_original = 4
+random.seed(42)
+augmentation_seq = iaa.Sequential([
+    iaa.Affine(rotate=(-10, 10)),
+    iaa.GaussianBlur(sigma=(0, 1.0)),
+    iaa.AdditiveGaussianNoise(scale=(0, 0.1 * 255)),
+    iaa.Multiply((0.8, 1.2))
+])
+for language in languages:
+    language_folder = os.path.join(dataset_path, language)
+    augmented_language_folder = os.path.join(augmented_dataset_path, language)
+    os.makedirs(augmented_language_folder, exist_ok=True)
+
+
+    image_files = os.listdir(language_folder)
+    random.shuffle(image_files)
+    image_files = image_files[:800 // len(languages)]  
+
+ 
+    for image_file in image_files:
+        image_path = os.path.join(language_folder, image_file)
+        image = cv2.imread(image_path)
+        original_shape = image.shape
+
+      
+        augmented_images = augmentation_seq.augment_images([image] * augmented_images_per_original)
+
+      
+        for i, augmented_image in enumerate(augmented_images):
+            augmented_image_path = os.path.join(augmented_language_folder, f'augmented_{image_file}_{i}.jpg')
+            cv2.imwrite(augmented_image_path, augmented_image)
+
+print("Image augmentation completed.")
+
+
+
+import cv2
+import numpy as np
+import onnxruntime
+
+class WebcamInferenceWrapper:
+    def __init__(self, model_path, labels):
+        self.model_path = model_path
+        self.labels = labels
+        self.session = onnxruntime.InferenceSession(model_path)
+        self.input_name = self.session.get_inputs()[0].name
+        self.output_name = self.session.get_outputs()[0].name
+
+    def preprocess_image(self, image):
+     
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        image = cv2.resize(image, (224, 224))  
+        image = image.astype(np.float32)
+        image /= 255.0
+        image = np.transpose(image, (2, 0, 1))
+        image = np.expand_dims(image, axis=0)
+        return image
+
+    def infer_image(self, image):
+      
+        input_image = self.preprocess_image(image)
+
+        
+        outputs = self.session.run([self.output_name], {self.input_name: input_image})
+
+       
+        predictions = np.squeeze(outputs[0])
+        predicted_class_index = np.argmax(predictions)
+        predicted_class = self.labels[predicted_class_index]
+        confidence = predictions[predicted_class_index] * 100
+
+        return predicted_class, confidence
+
+    def run_inference_on_webcam(self):
+       
+        cap = cv2.VideoCapture(0)
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+           
+            predicted_class, confidence = self.infer_image(frame)
+
+            
+            cv2.putText(frame, f"Class: {predicted_class}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            cv2.putText(frame, f"Confidence: {confidence:.2f}%", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+            
+            cv2.imshow("Webcam", frame)
+
+          
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+       
+        cap.release()
+        cv2.destroyAllWindows()
+model_path = ' C:\Users\Shree\Downloads\plate\archie'  
+
+
+labels = ['class1', 'class2', 'class3']  
+
+wrapper = WebcamInferenceWrapper(model_path, labels)
+
+wrapper.run_inference_on_webcam()
